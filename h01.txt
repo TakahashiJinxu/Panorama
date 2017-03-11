@@ -1,0 +1,329 @@
+#include "cv.h"
+#include "vector"
+#include "opencv\cxcore.hpp"
+#include "iostream"
+#include "opencv.hpp"
+#include "highgui.h"
+#include<opencv2/nonfree/features2d.hpp>????
+#include<opencv2/nonfree/nonfree.hpp>???
+#define MAXMATCHES_USED 100
+#define FRAMESAMPLE_INTERVAL 30
+using namespace cv;
+using namespace std;
+
+#include<Windows.h>??
+int partion(double array[], int s, int e)
+{
+	double temp = array[s];
+	while (s < e)
+	{
+		while (array[e] >= temp&& s<e)
+			e--;
+		if (s < e)
+			array[s] = array[e];
+		while (array[s] < temp && s<e)
+			s++;
+		if (s < e)
+			array[e] = array[s];
+	}
+	array[s] = temp;
+	return s;
+}
+
+double search_k(double array[], int s, int e, int k)
+{
+	int p = partion(array, s, e);
+	int q = p + 1;
+	if (q == k)
+		return array[p];
+	if (q < k)
+		return search_k(array, p + 1, e, k);
+	if (q > k)
+		return search_k(array, s, p - 1, k);
+}
+void calculate_image_borders(Point2f* src_borders,  Mat mH, Point2f* dst_borders)
+{
+	Mat src(3, 1, CV_64F);
+	Mat dst(3, 1, CV_64F);
+	//leftup
+	src.at<double>(0, 0) = src_borders[0].x;
+	src.at<double>(1, 0) = src_borders[0].y;
+	src.at<double>(2, 0) = 1;
+	dst = mH*src;
+	dst_borders[0].x = dst.at<double>(0, 0) / dst.at<double>(2, 0);
+	dst_borders[0].y = dst.at<double>(1, 0) / dst.at<double>(2, 0);
+	//rightup
+	src.at<double>(0, 0) = src_borders[1].x;
+	src.at<double>(1, 0) = src_borders[1].y;
+	src.at<double>(2, 0) = 1;
+	dst = mH*src;
+	dst_borders[1].x = dst.at<double>(0, 0) / dst.at<double>(2, 0);
+	dst_borders[1].y = dst.at<double>(1, 0) / dst.at<double>(2, 0);
+	//leftdown
+	src.at<double>(0, 0) = src_borders[2].x;
+	src.at<double>(1, 0) = src_borders[2].y;
+	src.at<double>(2, 0) = 1;
+	dst = mH*src;
+	dst_borders[2].x = dst.at<double>(0, 0) / dst.at<double>(2, 0);
+	dst_borders[2].y = dst.at<double>(1, 0) / dst.at<double>(2, 0);
+	//rightdown
+	src.at<double>(0, 0) = src_borders[3].x;
+	src.at<double>(1, 0) = src_borders[3].y;
+	src.at<double>(2, 0) = 1;
+	dst = mH*src;
+	dst_borders[3].x = dst.at<double>(0, 0) / dst.at<double>(2, 0);
+	dst_borders[3].y = dst.at<double>(1, 0) / dst.at<double>(2, 0);
+}
+void calculate_image_borders2(int height,int width, Mat mcumulateH, Point2f* dst_borders)
+{
+	Mat src(3, 1, CV_64F);
+	Mat dst(3, 1, CV_64F);
+	//leftup
+	Mat minvcumulateH = mcumulateH.inv();
+	src.at<double>(0, 0) = 0;
+	src.at<double>(1, 0) = 0;
+	src.at<double>(2, 0) = 1;
+	dst = minvcumulateH*src;
+	dst_borders[0].x = dst.at<double>(0, 0) / dst.at<double>(2, 0);
+	dst_borders[0].y = dst.at<double>(1, 0) / dst.at<double>(2, 0);
+	//rightup
+	src.at<double>(0, 0) = width;
+	src.at<double>(1, 0) = 0;
+	src.at<double>(2, 0) = 1;
+	dst = minvcumulateH*src;
+	dst_borders[1].x = dst.at<double>(0, 0) / dst.at<double>(2, 0);
+	dst_borders[1].y = dst.at<double>(1, 0) / dst.at<double>(2, 0);
+	//leftdown
+	src.at<double>(0, 0) = 0;
+	src.at<double>(1, 0) = height;
+	src.at<double>(2, 0) = 1;
+	dst = minvcumulateH*src;
+	dst_borders[2].x = dst.at<double>(0, 0) / dst.at<double>(2, 0);
+	dst_borders[2].y = dst.at<double>(1, 0) / dst.at<double>(2, 0);
+	//rightdown
+	src.at<double>(0, 0) = width;
+	src.at<double>(1, 0) = height;
+	src.at<double>(2, 0) = 1;
+	dst = minvcumulateH*src;
+	dst_borders[3].x = dst.at<double>(0, 0) / dst.at<double>(2, 0);
+	dst_borders[3].y = dst.at<double>(1, 0) / dst.at<double>(2, 0);
+}
+int main()//(int?argc,?_TCHAR*?argv[])????
+{
+	//Load?Image????
+
+	cv::VideoCapture cap;
+	cap.open("D:\\NCUT\\playground1.mp4");
+	
+	bool readflag = true;
+	Mat mcumulate_H(3, 3, CV_64F);
+	for (int i = 0; i < mcumulate_H.rows; i++)
+	{
+		for (int j = 0; j < mcumulate_H.cols; j++)
+		{
+			if (i == j) mcumulate_H.at<double>(i,j) = 1;
+			else mcumulate_H.at<double>(i,j) = 0;
+		}
+	}
+	cout << mcumulate_H;
+	vector<Mat> mHs;
+	vector<Mat> mImageSequence;
+	int iterator = 0;
+	Mat mOrigin;
+	double xmin, xmax, ymin, ymax;
+	while (true&&iterator<6)
+	{
+		Mat c_src1; Mat c_src2; Mat src1; Mat src2;
+		iterator++;
+		readflag = cap.read(c_src1);
+		cvtColor(c_src1, src1, CV_RGB2GRAY);
+		if (!readflag)
+		{
+			break;
+		}
+		if (iterator == 1)
+		{
+			c_src1.copyTo(mOrigin);
+			xmin = 0; xmax = c_src1.cols; ymin = 0; ymax = c_src1.rows;
+		}
+		for (int i = 0; i < FRAMESAMPLE_INTERVAL; i++)
+		{
+			readflag=cap.read(c_src2);
+			if (!readflag)
+			{
+				break;
+			}
+		}
+		if (!readflag)
+		{
+			break;
+		}
+		cvtColor(c_src2, src2, CV_RGB2GRAY);
+		//Mat c_src1 = imread("D:\\NCUT\\NCUT2.jpg");
+		//Mat c_src2 = imread("D:\\NCUT\\NCUT3.jpg");
+		//Mat src1  = imread("D:\\NCUT\\NCUT2.jpg", CV_LOAD_IMAGE_GRAYSCALE);
+		//Mat src2  = imread("D:\\NCUT\\NCUT3.jpg", CV_LOAD_IMAGE_GRAYSCALE);
+		if (!src1.data || !src2.data)
+		{
+			std::cout << "?--(!)?Error?reading?images?" << std::endl; return  -1;
+		}
+		mImageSequence.push_back(c_src2);
+		//sift?feature?detect????
+		cv::BRISK detector;
+		std::vector<KeyPoint> kp1, kp2;
+		double start = GetTickCount();
+		detector.detect(src1, kp1);
+		detector.detect(src2, kp2);
+		//cv::BRISK?extractor;????
+		Mat des1, des2;//descriptor????
+		detector.compute(src1, kp1, des1);
+		detector.compute(src2, kp2, des2);
+		Mat res1, res2;
+		int drawmode = DrawMatchesFlags::DRAW_RICH_KEYPOINTS;
+		drawKeypoints(c_src1, kp1, res1, Scalar::all(-1), drawmode);//在内存中画出特征点????
+		drawKeypoints(c_src2, kp2, res2, Scalar::all(-1), drawmode);
+		cout << "size of description of Img1:?" << kp1.size() << endl;
+		cout << "size of description of Img2:?" << kp2.size() << endl;
+
+		BFMatcher matcher(NORM_HAMMING);
+		vector<DMatch> matches;
+		matcher.match(des1, des2, matches);
+
+		double* dist = new double[matches.size()];
+
+		//-- Quick calculation of max and min distances between keypoints
+		for (int i = 0; i < matches.size(); i++)
+		{
+			dist[i] = matches[i].distance;
+		}
+		std::vector< DMatch > good_matches;
+		cv::vector<Point2f> good_kp1;
+		cv::vector<Point2f> good_kp2;
+		if (matches.size() <= MAXMATCHES_USED)
+		{
+			good_matches = matches;
+		}
+		else
+		{
+			double dist_thres = search_k(dist, 0, matches.size() - 1, MAXMATCHES_USED);
+			//-- Draw only "good" matches (i.e. whose distance is less than 3*min_dist )
+
+			for (int i = 0; i < matches.size(); i++)
+			{
+				if (matches[i].distance <= dist_thres)
+				{
+					good_matches.push_back(matches[i]);
+				}
+			}
+		}
+		for (int i = 0; i < good_matches.size(); i++)
+		{
+			good_kp1.push_back(kp1[good_matches[i].queryIdx].pt);
+			good_kp2.push_back(kp2[good_matches[i].trainIdx].pt);
+		}
+		cv::Point2f dst_borders[4];
+/*		Mat mH=findHomography(good_kp2, good_kp1, CV_RANSAC, 3.0);
+		
+		mHs.push_back(mH);
+		
+		dst_borders[0].x = 0;
+		dst_borders[0].y = 0;
+		dst_borders[1].x = src2.cols;
+		dst_borders[1].y = 0;
+		dst_borders[2].x = 0;
+		dst_borders[2].y = src2.rows;
+		dst_borders[3].x = src2.cols;
+		dst_borders[3].y = src2.rows;
+		for (int i = mHs.size() - 1; i >= 0; i--)
+		{
+			calculate_image_borders(dst_borders, mHs[i], dst_borders);
+		}
+*/
+		// another method
+		Mat mH = findHomography(good_kp1, good_kp2, CV_RANSAC, 3.0);
+		mcumulate_H = mH*mcumulate_H;
+		mHs.push_back(mcumulate_H.clone());
+		calculate_image_borders2(src2.rows, src2.cols, mcumulate_H, dst_borders);
+		for (int i = 0; i < 4; i++)
+		{
+			cout << dst_borders[i].x << "\t" << dst_borders[i].y << "\n";
+			if (dst_borders[i].x < xmin)
+			{
+				xmin = dst_borders[i].x;
+			}
+			else if (dst_borders[i].x > xmax)
+			{
+				xmax = dst_borders[i].x;
+			}
+			if (dst_borders[i].y < ymin)
+			{
+				ymin = dst_borders[i].y;
+			}
+			else if (dst_borders[i].y > ymax)
+			{
+				ymax = dst_borders[i].y;
+			}
+		}
+
+//		cout << mcumulate_H;
+		double end = GetTickCount();
+		cout << end - start << endl;
+		Mat img_match;
+		drawMatches(src1, kp1, src2, kp2, good_matches, img_match);//,Scalar::all(-1),Scalar::all(-1),vector<char>(),drawmode);????
+		cout << "number of matched points: " << matches.size() << endl;
+		namedWindow("matches", CV_NORMAL);
+		imshow("matches", mImageSequence[iterator-1]);
+		//	namedWindow("keypoints1", CV_NORMAL);
+		//	imshow("keypoints1", res1);
+		//	namedWindow("keypoints2", CV_NORMAL);
+		//	imshow("keypoints2", res2);
+//		cvWaitKey();
+//		cvDestroyAllWindows();
+	}
+	double dx, dy;
+	dx = -xmin; dy = -ymin;
+	Mat mPanorama(ymax - ymin, xmax - xmin, mOrigin.type(), cv::Scalar(0, 0, 0));
+	double xsrc, xdst, ysrc, ydst;
+	for (int y = 0; y < mOrigin.rows; y++)
+	{
+		for (int x = 0; x < mOrigin.cols; x++)
+		{
+			xdst=x + dx;
+			ydst=y + dy;
+			mPanorama.at<cv::Vec3b>(ydst, xdst)[0] = mOrigin.at<cv::Vec3b>(y, x)[0];
+			mPanorama.at<cv::Vec3b>(ydst, xdst)[1] = mOrigin.at<cv::Vec3b>(y, x)[1];
+			mPanorama.at<cv::Vec3b>(ydst, xdst)[2] = mOrigin.at<cv::Vec3b>(y, x)[2];
+		}
+	}
+	Mat vsrc(3, 1, CV_64F);
+	Mat vdst(3, 1, CV_64F);
+	for (int y = 0; y < mPanorama.rows; y++)
+	{
+		for (int x = 0; x < mPanorama.cols; x++)
+		{
+			xsrc = x - dx;
+			ysrc = y - dy;
+			for (int i = 0; i < mHs.size(); i++)
+			{
+				vsrc.at<double>(0, 0) = xsrc;
+				vsrc.at<double>(1, 0) = ysrc;
+				vsrc.at<double>(2, 0) = 1;
+				vdst = mHs[i]*vsrc;
+				xdst = vdst.at<double>(0, 0) / vdst.at<double>(2, 0);
+				ydst = vdst.at<double>(1, 0) / vdst.at<double>(2, 0);
+				if (xdst > 0 && xdst < mOrigin.cols-1&&ydst>0 && ydst < mOrigin.rows-1)
+				{
+					mPanorama.at<cv::Vec3b>(y, x)[0] = mImageSequence[i].at<cv::Vec3b>(int(ydst + 0.5), int(xdst + 0.5))[0];
+					mPanorama.at<cv::Vec3b>(y, x)[1] = mImageSequence[i].at<cv::Vec3b>(int(ydst + 0.5), int(xdst + 0.5))[1];
+					mPanorama.at<cv::Vec3b>(y, x)[2] = mImageSequence[i].at<cv::Vec3b>(int(ydst + 0.5), int(xdst + 0.5))[2];
+					break;
+				}
+			}
+		}
+	}
+	namedWindow("Panarama", CV_NORMAL);
+	imshow("Panarama", mPanorama);
+	imwrite("D:\\NCUT\\Panorama.jpg", mPanorama);
+	cvWaitKey();
+	return 0;
+}
